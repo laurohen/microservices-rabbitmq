@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading.Tasks;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using Serilog;
+using Serilog.Events;
 
 namespace RProducer
 {
@@ -42,70 +44,117 @@ namespace RProducer
 
         static void ProduceMsg()
         {
-            var factory = new ConnectionFactory() { HostName = "localhost" };
-            using (var connection = factory.CreateConnection())
-            using (var channel = connection.CreateModel())
+            Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.RollingFile(@"log-{Date}.txt", outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level}] {Message}{NewLine}{Exception}")
+            .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+            .Enrich.FromLogContext()
+            .WriteTo.Console()
+            .CreateLogger();
+            try
             {
-                channel.QueueDeclare(queue: "qwebapp",
-                                     durable: false,
-                                     exclusive: false,
-                                     autoDelete: false,
-                                     arguments: null);
-
-                String UUID = Guid.NewGuid().ToString();
-                while (true)
+                Log.Information(messageTemplate: "Starting the Program");
+                var factory = new ConnectionFactory() { HostName = "localhost" };
+                using (var connection = factory.CreateConnection())
+                using (var channel = connection.CreateModel())
                 {
-                    Random randNum = new Random();
+                    channel.QueueDeclare(queue: "qwebapp",
+                                         durable: false,
+                                         exclusive: false,
+                                         autoDelete: false,
+                                         arguments: null);
 
-                    string message = $"ID: {UUID} Message: Hello World! Req.: {randNum.Next()} Timestamp: {DateTime.Now}";
-                    var body = Encoding.UTF8.GetBytes(message);
+                    String UUID = Guid.NewGuid().ToString();
+                    while (true)
+                    {
+                        Random randNum = new Random();
 
-                    channel.BasicPublish(exchange: "",
-                                         routingKey: "qwebapp",
-                                         basicProperties: null,
-                                         body: body);
-                    Console.WriteLine(" [x] Sent {0}", message);
+                        string message = $"ID: {UUID} Message: Hello World! Req.: {randNum.Next()} Timestamp: {DateTime.Now}";
+                        var body = Encoding.UTF8.GetBytes(message);
 
-                    System.Threading.Thread.Sleep(5000);
+                        channel.BasicPublish(exchange: "",
+                                             routingKey: "qwebapp",
+                                             basicProperties: null,
+                                             body: body);
+                        Console.WriteLine(" [x] Sent {0}", message);
+
+                        System.Threading.Thread.Sleep(5000);
+                    }
+
                 }
-
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(messageTemplate: "Something went wrong");
+                Console.WriteLine(" Press [enter] to exit.");
+                Console.ReadLine();
+            }
+            finally
+            {
+                Log.CloseAndFlush();
             }
         }
         static void ReceiveMsg()
         {
-            var factory = new ConnectionFactory() { HostName = "localhost" };
-            using (var connection = factory.CreateConnection())
-            using (var channel = connection.CreateModel())
+            Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.RollingFile(@"log-{Date}.txt", outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level}] {Message}{NewLine}{Exception}")
+            .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+            .Enrich.FromLogContext()
+            .WriteTo.Console()
+            .CreateLogger();
+
+            try
             {
-                channel.QueueDeclare(queue: "qwebapp",
-                                     durable: false,
-                                     exclusive: false,
-                                     autoDelete: false,
-                                     arguments: null);
+                Log.Information(messageTemplate: "Starting the Program");
 
-                var consumer = new EventingBasicConsumer(channel);
-                consumer.Received += (model, ea) =>
+                var factory = new ConnectionFactory() { HostName = "localhost" };
+                using (var connection = factory.CreateConnection())
+                using (var channel = connection.CreateModel())
                 {
-                    try
-                    {
-                        var body = ea.Body.ToArray();
-                        var message = Encoding.UTF8.GetString(body);
-                        Console.WriteLine(" [x] Received {0}", message);
+                    channel.QueueDeclare(queue: "qwebapp",
+                                         durable: false,
+                                         exclusive: false,
+                                         autoDelete: false,
+                                         arguments: null);
 
-                        channel.BasicAck(ea.DeliveryTag, false);
-                    }
-                    catch (Exception ex)
+                    var consumer = new EventingBasicConsumer(channel);
+                    consumer.Received += (model, ea) =>
                     {
-                        // log ex
-                        channel.BasicNack(ea.DeliveryTag, false, false);
-                    }
-                };
-                channel.BasicConsume(queue: "qwebapp",
-                                     autoAck: false,
-                                     consumer: consumer);
+                        try
+                        {
+                            Log.Information(messageTemplate: "Receiving the messages");
+                            var body = ea.Body.ToArray();
+                            var message = Encoding.UTF8.GetString(body);
+                            Console.WriteLine(" [x] Received {0}", message);
 
+                            channel.BasicAck(ea.DeliveryTag, false);
+                        }
+                        catch (Exception ex)
+                        {
+                            // log ex
+                            Log.Fatal(ex, messageTemplate: "Something went wrong with delivery, doing a Nack");
+                            channel.BasicNack(ea.DeliveryTag, false, false);
+                        }
+                    };
+                    channel.BasicConsume(queue: "qwebapp",
+                                         autoAck: false,
+                                         consumer: consumer);
+
+                    Console.WriteLine(" Press [enter] to exit.");
+                    Console.ReadLine();
+                }
+            }
+            catch (Exception ex)
+            {
+                // log ex
+                Log.Fatal(messageTemplate: "Something went wrong");
                 Console.WriteLine(" Press [enter] to exit.");
                 Console.ReadLine();
+            }
+            finally
+            {
+                Log.CloseAndFlush();
             }
         }
     }
